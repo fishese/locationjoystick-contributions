@@ -69,6 +69,7 @@ import com.locationjoystick.core.common.constants.AppConstants
 import com.locationjoystick.core.designsystem.LjIcons
 import com.locationjoystick.core.designsystem.component.LjCheckboxRow
 import com.locationjoystick.core.designsystem.component.LjScaffold
+import com.locationjoystick.core.designsystem.component.rememberLjSheetState
 import com.locationjoystick.core.model.AppFeature
 import com.locationjoystick.core.model.FeatureSurface
 import com.locationjoystick.core.model.SpeedProfile
@@ -436,7 +437,7 @@ private fun CompassCalibrationDialog(
     var currentCy by remember { mutableFloatStateOf(cy) }
     var currentRadius by remember { mutableFloatStateOf(radius) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberLjSheetState()) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text("Calibrate compass region", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(12.dp))
@@ -556,11 +557,31 @@ private fun featureMeta(feature: AppFeature): FeatureMeta =
         }
 
         AppFeature.ROAMING -> {
-            FeatureMeta("Roaming", "Configure and start random walking within a radius.", LjIcons.Explore)
+            FeatureMeta(
+                "Roaming",
+                "Configure and start a walk around the block or a planting spiral from the map or widget.",
+                LjIcons.Explore,
+            )
         }
 
         AppFeature.SEARCH -> {
             FeatureMeta("Search", "Find and jump to a place by name.", LjIcons.Search)
+        }
+
+        AppFeature.PASTE_COORDINATES -> {
+            FeatureMeta(
+                "Paste coordinates",
+                "Paste latitude and longitude to teleport, walk, or save as a favorite.",
+                LjIcons.ContentPaste,
+            )
+        }
+
+        AppFeature.CAPTURE_COORDINATES -> {
+            FeatureMeta(
+                "Capture coordinates",
+                "Collect map links from other apps into a list, then save them as a route.",
+                LjIcons.AddLocationAlt,
+            )
         }
 
         AppFeature.SPEED_CYCLE -> {

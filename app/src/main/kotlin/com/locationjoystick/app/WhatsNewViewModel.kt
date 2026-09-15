@@ -34,7 +34,8 @@ class WhatsNewViewModel
         private val whatsNewRepository: WhatsNewRepository,
     ) : ViewModel() {
         val hasUnseenUpdate: StateFlow<Boolean> =
-            settingsRepository.getWhatsNewLastSeenVersion()
+            settingsRepository
+                .getWhatsNewLastSeenVersion()
                 .map { it != AppConstants.AppInfo.VERSION_NAME }
                 .stateIn(
                     scope = viewModelScope,

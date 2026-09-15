@@ -8,11 +8,17 @@ Key files: `:feature:settings:impl/SettingsScreen.kt`, `:core:data/SettingsRepos
 
 Covers: routes, favorites, speed profiles, widget/map feature config + shared display order, roaming defaults, jitter settings, hot locations state, hot routes state, sort preferences.
 
-`AppSettings.featureOrder`/`enabledWidgetFeatures`/`enabledMapFeatures` (`AppFeature` enum) round-trip through `enabledWidgetFeatures`/`enabledMapFeatures`/`featureOrder` JSON arrays. Old exports from before the `WidgetFeature`/`MapFabFeature` merge still import correctly — `SettingsExportCodec` aliases the legacy `ROUTES_FLOATING`/`FAVORITES_FLOATING` names to `AppFeature.ROUTES`/`AppFeature.FAVORITES`, and missing `enabledMapFeatures`/`featureOrder` fields fall back to defaults.
+`AppSettings.featureOrder`/`enabledWidgetFeatures`/`enabledMapFeatures` (`AppFeature` enum) round-trip through `enabledWidgetFeatures`/`enabledMapFeatures`/`featureOrder` JSON arrays. Old exports from before the `WidgetFeature`/`MapFabFeature` merge still import correctly — `SettingsExportCodec` aliases the legacy `ROUTES_FLOATING`/`FAVORITES_FLOATING` names to `AppFeature.ROUTES`/`AppFeature.FAVORITES`, and missing `enabledMapFeatures`/`featureOrder` fields fall back to defaults (`DEFAULT_MAP_ENABLED` includes `PASTE_COORDINATES` and `CAPTURE_COORDINATES`; `DEFAULT_WIDGET_ENABLED` includes `PASTE_COORDINATES` and `ROAMING`). An export that already lists `enabledMapFeatures` / `enabledWidgetFeatures` without those newer FABs keeps that set as stored (import writes `map_fab_seen_defaults` / `widget_seen_defaults` so the on-device upgrade merge does not add them back). On-device upgrades that never imported such a file still gain new default-on FABs via `mergeNewDefaultMapFeatures` / `mergeNewDefaultWidgetFeatures`. Captured-coordinate lists and the capture on/off toggle are **not** part of `ExportData`.
+
+`roamingDefaults` JSON includes `kind`, `plantingStartRadiusMeters`, `plantingEndRadiusMeters`, `plantingInfiniteLoops`, `plantingLoopCount`, and `plantingSpeedProfileId`. Old exports without those keys import as Walk around the block with planting defaults (5 m / 39 m, infinite loops, Bike speed).
 
 Each entry in `favoriteLocations` includes the optional `category` field (`FavoriteLocation.category`). Old exports without it import cleanly — a missing or `null` `category` defaults to `null`.
 
 Each entry in `routes` includes the optional `speedProfileId` field (`Route.speedProfileId`), round-tripping the same way `FavoriteLocation.category` does. Old exports without it import cleanly — a missing or `null` `speedProfileId` defaults to `null`.
+
+`routesSortMode` and `favoritesSortMode` preserve the four list sort choices. Older exports with
+only `routesSortNewestFirst` / `favoritesSortNewestFirst` migrate to **Newest saved** or
+**Oldest saved**. The legacy booleans remain in new exports for backward compatibility.
 
 Schema version: `AppConstants.ExportConstants.SCHEMA_VERSION`.
 
@@ -42,13 +48,15 @@ Routes can be imported from GPX files via the Routes screen overflow menu → "I
 - If a file has no `<trk>`/`<rte>` elements, bare top-level `<wpt>` points (some generators, e.g. pokedex100, emit these with no track/route wrapper) are imported as a single "Imported Route".
 - A file with no `<trk>`/`<rte>`/`<wpt>` points at all shows an "Import failed" error rather than creating an empty route.
 
-Key function: `parseGpxRoutes` in `:feature:routes:impl/RoutesViewModel.kt`.
+Key function: `parseGpxRoutes` in `:core:common/util/GpxRoutes.kt` (used by Routes → Import GPX and by opening a GPX from another app).
+
+Opening a `.gpx` from Files / Downloads / Share / a chat app uses the same parser, then the map paste-coordinates sheet (`GpxOpenRepository`) instead of saving every track immediately. See @docs/features/routes.md.
 
 ## Third-Party Imports
 
 Settings screen → Import icon → dropdown menu offers:
 
-- **Import from GPS Joystick** — imports routes from GPS Joystick app format.
+- **Import from GPS Joystick** — pick a **GPX** export from GPS Joystick (Settings → Import). `<wpt>` entries become favorites (keeping their saved names); each `<rte>`/`<trk>` becomes a straight-line route. Routes with more than 2000 waypoints are skipped and the import toast reports how many. `.db` Realm backups are not supported — GPS Joystick's database does not keep names next to coordinates in a recoverable layout.
 - **Import from YAMLA** — imports routes from YAMLA JSON format.
 
 All imported routes are saved as `RouteType.STRAIGHT` segments.

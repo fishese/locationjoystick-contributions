@@ -1,6 +1,7 @@
 # locationjoystick
 
-![Build](https://img.shields.io/github/actions/workflow/status/shortcuts/locationjoystick/main.yml?label=Build&style=flat-square)
+Coordinate, capture, planting, and floating-widget improvements for upstream review.
+
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
 ![minSdk](https://img.shields.io/badge/minSdk-28%20(Android%209)-green?style=flat-square)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.x-purple?style=flat-square)
@@ -20,32 +21,33 @@ Here's everything included:
 
 | Feature | Description |
 |---------|-------------|
-| **Map** | OpenStreetMap via MapLibre (GPU-accelerated, offline-capable). Tap to walk or teleport. Spoofed position shown as live marker. Optional translucent circle shows the current position-jitter radius when Debug stats is enabled. |
+| **Map** | OpenStreetMap via MapLibre (GPU-accelerated, offline-capable). Tap to walk or teleport. Paste coordinates from the map or floating widget to teleport, walk, save as a favorite, or play two or more points as a route (loop, reverse, return, follow roads, planting). Spoofed position shown as live marker. Recenter returns to real GPS when spoofing is off, without replacing the remembered mock position. Optional translucent circle shows the current position-jitter radius when Debug stats is enabled. |
 | **Last Position** | Restores last spoofed location on app restart. No manual re-entry needed. |
 | **Joystick** | Floating overlay stays on top of any app. Drag to move in any direction at chosen speed. Draggable anywhere on screen. |
 | **Speed Profiles** | Slow Walk / Walk / Run / Bike / Drive presets, all user-editable. Anti-cheat warning when speed exceeds threshold. Accessible from floating widget. |
-| **Routes** | Create waypoints on map → polyline. Two types: **straight** (direct segments) and **guided** (OSRM road-following). Save, edit, replay, loop, or record in real time. Import from GPX files. |
-| **Roaming** | Set center, radius, duration. Auto-walks randomly within radius. Optional road-following via OSRM. Optional return-to-start after loop completes. Configured via bottom sheet on Map screen. |
-| **Favorites** | Save named map positions. Instantly teleport or walk to any. Add via inline dialog or MapPicker with Nominatim search. Optional curated list of 48 popular locations (Settings → Favorites → Show hot locations). |
-| **Floating Widget** | Configurable quick-access panel floats over other apps. Collapsible FAB → expanded panel with user-selected controls. |
+| **Routes** | Create waypoints on map → polyline, or paste a list of coordinates. Two types: **straight** (direct segments) and **guided** (OSRM road-following). **Planting mode** walks a circle around each pasted point (default 35 m), or around each saved stop at playback without changing the route. Optional teleport between waypoints (or between planting circles), with a wait at each hop. Previous / Next skip one stop and wait there when hopping. Open a `.gpx` file from another app to save or play it (name filled from the file). Sort by name or save order. Save, edit, replay, loop, or record in real time. Import from GPX files. |
+| **Roaming** | Two mutually exclusive modes from the map sheet or floating widget: Walk around the block (random walk in a radius, optional road-following and return-to-start) and Planting (spiral out then in around the current point, default Bike speed, infinite or N loops). Widget roaming is on by default. |
+| **Favorites** | Save named map positions. Sort A–Z, Z–A, newest first, or oldest first. Rename and delete from either the app or widget. Instantly teleport or walk to any. Share the current location from the toolbar or the widget favorites list. Add via inline dialog, pasted `lat, lon` coordinates, the map paste-coordinates sheet, or MapPicker with Nominatim search. Optional curated list of 48 popular locations (Settings → Favorites → Show hot locations). |
+| **Floating Widget** | Configurable quick-access panel floats over other apps. The map opens in a small movable window with an expand button and north lock enabled by default. Widget lists support rename, delete, and route sharing. Collapsible FAB → expanded panel with user-selected controls. Press and hold the app icon for Pause (spoofing off, widget stays; other buttons fade until Start) or Stop (ends spoofing and removes the widget). Lists and route options follow light/dark Appearance; the round buttons stay dark with bright icons. Loop / Reverse / Return / Follow roads / Planting / Teleport between waypoints sit in compact rows so Start stays on a phone screen. |
 | **Click-to-Move** | Long-press map → "Walk here" or "Teleport here". Walk advances at current speed; teleport jumps instantly. |
 | **QR Transfer** | Share or import config between devices on the same Wi-Fi network by scanning a single QR code. |
 | **GPS Realism** | Makes spoofed GPS indistinguishable from a real chip. Toggle per-feature: bearing hold when stationary, realistic altitude drift (user-configurable magnitude), warm-up accuracy envelope (converges over 30 s), satellite count in fix (7–14), and natural signal dropouts (auto-paused during route replay and walk-to). Bearing hold, altitude drift, and satellite count are on by default; warm-up envelope and signal dropouts are opt-in. Altitude anchors to the real ground elevation at the spoofed position (looked up automatically, on by default) unless manually overridden from the floating widget (off by default). |
-| **Import/Export** | All data to/from JSON (routes, favorites, speed profiles, widget config, roaming defaults, jitter settings). Route import also supports GPX, GPS Joystick, and YAMLA formats. A "Reset all data" button clears favorites, routes, and settings in one tap, without an OS-level app data clear or re-onboarding. |
+| **Import/Export** | All data to/from JSON (routes, favorites, speed profiles, widget config, roaming defaults, jitter settings). Route import also supports GPX, a GPX export from GPS Joystick, and YAMLA. A "Reset all data" button clears favorites, routes, and settings in one tap, without an OS-level app data clear or re-onboarding. |
 | **Background Service** | Spoofs while minimized or screen off via foreground service. Low-priority notification, with an optional setting to hide its status bar icon (Android still requires the notification to exist). |
 | **Onboarding** | Multi-step first-run flow: location permission, overlay permission, mock location enablement. |
 | **Group Sync** | Sync spoofed location across multiple devices on the same Wi-Fi network. No account needed. One device is the leader (shares position via QR-joined session); others are followers (mirror leader's location). |
 | **Tap to Walk** | Two quick-walk shortcuts. Floating map quick-walk: tap the floating map to walk there without a confirmation sheet. Screen overlay: a crosshair button in the widget panel activates a transparent full-screen overlay — tap any point in a game or map app to walk there. Configurable meters-per-pixel scale. |
+| **Capture Coordinates** | Collect map links into a list, jump immediately, or do both. Keep or clear earlier points when enabling capture. Choose a pass-through browser while capture is off. Open Capture from Home, the drawer, or by holding the widget paste button. |
 | **Deep Links & Location Sharing** | Share any coordinate or saved favorite as a link. Anyone who taps it on Android with the app installed lands directly on that spot with a confirm sheet (teleport / walk / walk via roads). Also registers as a handler for Google Maps and `geo:` links from other apps. |
 | **Theme** | Light and dark color themes for readability across lighting conditions. Toggle in Settings → Appearance. |
 | **Hide Teleport Features** | Optional toggle (off by default) that hides every teleport button/checkbox app-wide — map, favorites, routes, group sync, and widget — leaving only walking and route replay. |
-| **What's New Popup** | Small dismissible badge, shown app-wide after an update, that opens a modal with the version's highlights and a link to the full changelog. Never blocks the app. |
+| **What's New Popup** | Small dismissible badge on Home after an update, that opens a modal with the version's highlights and a link to the full changelog. Never blocks the app. |
 
 ---
 
 ## Download
 
-Pre-built APKs on [Releases page](https://github.com/shortcuts/locationjoystick/releases).
+Upstream APKs are available on the [Releases page](https://github.com/shortcuts/locationjoystick/releases). They do not include this branch's additions; build this branch to try them.
 
 Sideload:
 
@@ -88,8 +90,8 @@ See [docs/testing.md](docs/testing.md) for the full testing strategy and report 
 ### Clone and build
 
 ```bash
-git clone https://github.com/shortcuts/locationjoystick.git
-cd locationjoystick
+git clone --branch codex/coordinate-workflows https://github.com/fishese/locationjoystick-contributions.git
+cd locationjoystick-contributions
 ./gradlew assembleDebug
 ```
 
@@ -105,7 +107,9 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 ./gradlew assembleRelease
 ```
 
-To build a release AAB for manual Play Store upload:
+Without signing environment variables this produces an unsigned APK.
+
+To build a release AAB for manual Play Store upload (release keystore, not debug):
 
 ```bash
 make bundle
@@ -131,7 +135,7 @@ Full module table and dependency flow: [docs/architecture.md](docs/architecture.
 |-----------|---------|
 | Language | Kotlin 2.x |
 | UI | Jetpack Compose + Material3 |
-| Map | MapLibre Android SDK 12.x |
+| Map | MapLibre Android SDK 13.2 |
 | DI | Hilt (Dagger) |
 | Database | Room |
 | Preferences | DataStore (Preferences) |

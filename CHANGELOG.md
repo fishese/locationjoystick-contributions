@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Coordinate and widget workflows
+
+- Add flexible coordinate paste, capture List/Jump actions, and browser pass-through.
+- Add real-GPS recentering and a compact movable widget map with default north lock.
+- Add favorite and route sorting, widget rename/delete, and coordinate sharing.
+- Add planting paths, spiral roaming, and external GPX opening.
+- Improve map tiles, widget parking, and offline update highlights.
+
+
 ## [0.18.2](https://github.com/shortcuts/locationjoystick/compare/v0.18.1...v0.18.2) (2026-08-31)
 
 

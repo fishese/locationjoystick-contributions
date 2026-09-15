@@ -58,6 +58,7 @@ import com.locationjoystick.core.data.CooldownState
 import com.locationjoystick.core.data.toBadgeText
 import com.locationjoystick.core.designsystem.component.CooldownAdvisoryBadge
 import com.locationjoystick.core.designsystem.component.LjScaffold
+import com.locationjoystick.core.designsystem.component.WideContentClamp
 import com.locationjoystick.core.location.rememberSpoofToggleState
 import com.locationjoystick.core.model.GroupRole
 import com.locationjoystick.core.model.GroupState
@@ -160,11 +161,11 @@ internal fun GroupSyncScreen(
         onNavigationClick = onOpenDrawer,
         snackbarHost = { SnackbarHost(snackbarHostState) { Snackbar(it) } },
     ) { paddingValues ->
-        Column(
-            modifier =
+        WideContentClamp(
+            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            contentModifier =
                 Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
+                    .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

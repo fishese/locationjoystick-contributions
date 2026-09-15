@@ -9,6 +9,7 @@ import com.locationjoystick.core.model.MockMode
 import com.locationjoystick.core.model.RecentSearch
 import com.locationjoystick.core.model.RoamingDefaults
 import com.locationjoystick.core.model.Route
+import com.locationjoystick.core.model.RouteProgress
 import com.locationjoystick.core.model.SpeedUnit
 
 /**
@@ -37,6 +38,7 @@ data class MapSharedState(
     val roamingDefaults: RoamingDefaults = RoamingDefaults(),
     val jitterRadiusMeters: Double = 0.0,
     val debugStatsEnabled: Boolean = false,
+    val routeProgress: RouteProgress? = null,
 )
 
 val MapSharedState.walkTarget: LatLng? get() = (walkMode as? WalkMode.Walking)?.target
@@ -53,5 +55,5 @@ fun MapSharedState.nonPositionKey(): Any =
             Triple(walkMode, routeTrace, routes) to
             Triple(favorites, favoriteCooldownStates, isRoaming),
         Triple(isRoamingPaused, speedUnit, recentSearches),
-        Triple(roamingDefaults, jitterRadiusMeters, debugStatsEnabled),
+        Triple(roamingDefaults, jitterRadiusMeters, debugStatsEnabled) to routeProgress,
     )

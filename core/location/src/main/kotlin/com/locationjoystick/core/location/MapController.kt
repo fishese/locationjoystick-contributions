@@ -18,7 +18,10 @@ import com.locationjoystick.core.model.MockLocationState
 import com.locationjoystick.core.model.MockMode
 import com.locationjoystick.core.model.RoamingConfig
 import com.locationjoystick.core.model.RoamingDefaults
-import com.locationjoystick.core.model.sortedByAge
+import com.locationjoystick.core.model.RouteProgress
+import com.locationjoystick.core.model.isRoutePlaying
+import com.locationjoystick.core.model.sortedBySavedItemMode
+import com.locationjoystick.core.model.speedProfileIdForKind
 import com.locationjoystick.core.model.toConfig
 import com.locationjoystick.core.routing.OsrmClient
 import com.locationjoystick.core.routing.RoutingErrorReporter
@@ -27,6 +30,7 @@ import com.locationjoystick.core.routing.osrmFailureMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -50,6 +54,7 @@ private data class LocationStateSnapshot(
     val state: MockLocationState,
     val walkPaused: Boolean,
     val mode: MockMode,
+    val routeProgress: RouteProgress?,
 )
 
 /**
@@ -78,8 +83,8 @@ class MapController
         @param:ApplicationScope private val appScope: CoroutineScope,
     ) {
         @Suppress("ktlint:standard:property-naming")
-        private val _state = MutableStateFlow(MapSharedState())
-        val sharedState: StateFlow<MapSharedState> = _state.asStateFlow()
+        private val _sharedState = MutableStateFlow(MapSharedState())
+        val sharedState: StateFlow<MapSharedState> = _sharedState.asStateFlow()
 
         val completionMessages = locationRepository.completionEvents
 
@@ -118,15 +123,17 @@ class MapController
                     locationRepository.mockLocationState,
                     locationRepository.isWalkPaused,
                     locationRepository.currentMode,
-                ) { position, state, walkPaused, mode ->
-                    LocationStateSnapshot(position, state, walkPaused, mode)
+                    locationRepository.routeProgress,
+                ) { position, state, walkPaused, mode, progress ->
+                    LocationStateSnapshot(position, state, walkPaused, mode, progress)
                 }.collect { snap ->
-                    _state.update {
+                    _sharedState.update {
                         it.copy(
                             currentPosition = snap.position,
                             mockLocationState = snap.state,
                             isWalkPaused = snap.walkPaused,
                             mockMode = snap.mode,
+                            routeProgress = snap.routeProgress,
                         )
                     }
                 }
@@ -137,9 +144,9 @@ class MapController
             appScope.launch {
                 combine(
                     routeRepository.getRoutes(),
-                    settingsRepository.getRoutesSortNewestFirst(),
-                ) { routes, newestFirst -> routes.sortedByAge(newestFirst) }
-                    .collect { sorted -> _state.update { it.copy(routes = sorted) } }
+                    settingsRepository.getRoutesSortMode(),
+                ) { routes, sortMode -> routes.sortedBySavedItemMode(sortMode) { it.name } }
+                    .collect { sorted -> _sharedState.update { it.copy(routes = sorted) } }
             }
         }
 
@@ -147,9 +154,9 @@ class MapController
             appScope.launch {
                 combine(
                     favoriteRepository.getFavorites(),
-                    settingsRepository.getFavoritesSortNewestFirst(),
-                ) { favorites, newestFirst -> favorites.sortedByAge(newestFirst) }
-                    .collect { sorted -> _state.update { it.copy(favorites = sorted) } }
+                    settingsRepository.getFavoritesSortMode(),
+                ) { favorites, sortMode -> favorites.sortedBySavedItemMode(sortMode) { it.name } }
+                    .collect { sorted -> _sharedState.update { it.copy(favorites = sorted) } }
             }
         }
 
@@ -157,7 +164,7 @@ class MapController
             appScope.launch {
                 locationRepository.routeWaypoints.collect { waypoints ->
                     if (waypoints != null) ephemeralReplayController.clearPendingWaypoints()
-                    _state.update { it.copy(routeTrace = waypoints) }
+                    _sharedState.update { it.copy(routeTrace = waypoints) }
                 }
             }
         }
@@ -165,7 +172,7 @@ class MapController
         private fun observeEphemeralWaypoints() {
             appScope.launch {
                 ephemeralReplayController.pendingWaypoints.collect { waypoints ->
-                    _state.update { current ->
+                    _sharedState.update { current ->
                         when {
                             waypoints.isNotEmpty() && current.ephemeralWaypoints != waypoints -> {
                                 val followRoads = (current.walkMode as? WalkMode.EphemeralReplay)?.followRoads ?: false
@@ -189,7 +196,7 @@ class MapController
             appScope.launch {
                 combine(roamingRepository.isRoaming, roamingRepository.isRoamingPaused) { r, p -> r to p }
                     .collect { (roaming, paused) ->
-                        _state.update { it.copy(isRoaming = roaming, isRoamingPaused = paused) }
+                        _sharedState.update { it.copy(isRoaming = roaming, isRoamingPaused = paused) }
                     }
             }
         }
@@ -197,7 +204,7 @@ class MapController
         private fun observeSpeedUnit() {
             appScope.launch {
                 settingsRepository.getSpeedUnit().collect { unit ->
-                    _state.update { it.copy(speedUnit = unit) }
+                    _sharedState.update { it.copy(speedUnit = unit) }
                 }
             }
         }
@@ -210,7 +217,7 @@ class MapController
                 ) { stats, enabled -> (stats?.jitterRadiusMeters ?: 0.0) to enabled }
                     .distinctUntilChanged()
                     .collect { (radius, enabled) ->
-                        _state.update { it.copy(jitterRadiusMeters = radius, debugStatsEnabled = enabled) }
+                        _sharedState.update { it.copy(jitterRadiusMeters = radius, debugStatsEnabled = enabled) }
                     }
             }
         }
@@ -218,7 +225,7 @@ class MapController
         private fun observeFavoriteCooldowns() {
             appScope.launch {
                 teleportUseCase.cooldownsFor(favoriteRepository.getFavorites()).collect { states ->
-                    _state.update { it.copy(favoriteCooldownStates = states) }
+                    _sharedState.update { it.copy(favoriteCooldownStates = states) }
                 }
             }
         }
@@ -226,7 +233,7 @@ class MapController
         private fun observeRecentSearches() {
             appScope.launch {
                 settingsRepository.getRecentSearches().collect { searches ->
-                    _state.update { it.copy(recentSearches = searches) }
+                    _sharedState.update { it.copy(recentSearches = searches) }
                 }
             }
         }
@@ -234,7 +241,7 @@ class MapController
         private fun observeRoamingDefaults() {
             appScope.launch {
                 settingsRepository.getRoamingDefaults().collect { defaults ->
-                    _state.update { it.copy(roamingDefaults = defaults) }
+                    _sharedState.update { it.copy(roamingDefaults = defaults) }
                 }
             }
         }
@@ -245,7 +252,7 @@ class MapController
                     .getMapFeatureOrder()
                     .distinctUntilChanged()
                     .collect { order ->
-                        _state.update { it.copy(mapFeatureOrder = order) }
+                        _sharedState.update { it.copy(mapFeatureOrder = order) }
                     }
             }
             appScope.launch {
@@ -253,7 +260,7 @@ class MapController
                     .getEnabledMapFeatures()
                     .distinctUntilChanged()
                     .collect { enabled ->
-                        _state.update { it.copy(enabledMapFeatures = enabled) }
+                        _sharedState.update { it.copy(enabledMapFeatures = enabled) }
                     }
             }
         }
@@ -268,11 +275,11 @@ class MapController
                         when (prev) {
                             MockMode.WALK_TO -> {
                                 locationRepository.setRouteWaypoints(null)
-                                _state.update { it.copy(walkMode = WalkMode.Idle) }
+                                _sharedState.update { it.copy(walkMode = WalkMode.Idle) }
                             }
 
                             MockMode.ROUTE_REPLAY -> {
-                                if (_state.value.walkMode is WalkMode.EphemeralReplay) {
+                                if (_sharedState.value.walkMode is WalkMode.EphemeralReplay) {
                                     ephemeralReplayController.clearPendingWaypoints()
                                 }
                             }
@@ -314,7 +321,18 @@ class MapController
         fun stopSpoofing() {
             ContextCompat.startForegroundService(context, MockLocationIntentBuilder.stopSpoofing(context))
             ephemeralReplayController.clearPendingWaypoints()
-            _state.update { it.copy(walkMode = WalkMode.Idle, routeTrace = null) }
+            _sharedState.update { it.copy(walkMode = WalkMode.Idle, routeTrace = null) }
+        }
+
+        /**
+         * Stops mock GPS the same way as [stopSpoofing], but leaves the floating widget on screen.
+         * Joystick overlay still closes. Next Start (widget or app) resumes spoofing.
+         */
+        fun parkSpoofingKeepWidget() {
+            cancelAnyActiveMovement()
+            ContextCompat.startForegroundService(context, MockLocationIntentBuilder.parkSpoofingKeepWidget(context))
+            ephemeralReplayController.clearPendingWaypoints()
+            _sharedState.update { it.copy(walkMode = WalkMode.Idle, routeTrace = null) }
         }
 
         fun toggleSpoofing() {
@@ -322,6 +340,7 @@ class MapController
         }
 
         fun teleportTo(position: LatLng) {
+            cancelAnyActiveMovement()
             appScope.launch { teleportUseCase.execute(position) }
         }
 
@@ -329,16 +348,16 @@ class MapController
             pendingRoadWalkJob?.cancel()
             pendingRoadWalkJob = null
             walkCoordinator.cancel()
-            if (_state.value.ephemeralWaypoints.isNotEmpty()) {
+            if (_sharedState.value.ephemeralWaypoints.isNotEmpty()) {
                 context.startService(MockLocationIntentBuilder.cancelRouteReplay(context))
                 ephemeralReplayController.clearPendingWaypoints()
-                _state.update { it.copy(walkMode = WalkMode.Idle) }
+                _sharedState.update { it.copy(walkMode = WalkMode.Idle) }
             }
         }
 
         fun walkTo(position: LatLng) {
             cancelAnyActiveMovement()
-            _state.update {
+            _sharedState.update {
                 it.copy(
                     walkMode = WalkMode.Walking(target = position, start = it.currentPosition),
                     routeTrace = null,
@@ -368,6 +387,7 @@ class MapController
                         return@launch
                     }
                     val routeResult = osrmClient.getRoute(OsrmClient.PROFILE_FOOT, listOf(current, position))
+                    ensureActive()
                     val waypoints = routeResult.getOrNull()
                     if (waypoints.isNullOrEmpty()) {
                         val reason = routeResult.exceptionOrNull()?.let(::classifyOsrmFailure)
@@ -378,7 +398,7 @@ class MapController
                         return@launch
                     }
                     locationRepository.setRouteWaypoints(waypoints)
-                    _state.update {
+                    _sharedState.update {
                         it.copy(walkMode = WalkMode.Walking(target = position, start = it.currentPosition, isViaRoads = true))
                     }
                     walkCoordinator.startWalkAlongRoute(waypoints, appScope) { newPos, speedMs, bearing ->
@@ -401,18 +421,18 @@ class MapController
             pendingRoadWalkJob?.cancel()
             pendingRoadWalkJob = null
             walkCoordinator.cancel()
-            if (_state.value.ephemeralWaypoints.isNotEmpty()) {
+            if (_sharedState.value.ephemeralWaypoints.isNotEmpty()) {
                 context.startService(MockLocationIntentBuilder.cancelRouteReplay(context))
             }
             ephemeralReplayController.clearPendingWaypoints()
-            _state.update { it.copy(walkMode = WalkMode.Idle, isWalkPaused = false, routeTrace = null) }
+            _sharedState.update { it.copy(walkMode = WalkMode.Idle, isWalkPaused = false, routeTrace = null) }
         }
 
         fun addEphemeralWaypoint(
             position: LatLng,
             followRoads: Boolean = false,
         ) {
-            val current = _state.value
+            val current = _sharedState.value
             appScope.launch {
                 ephemeralReplayController.addWaypoint(
                     newPoint = position,
@@ -423,7 +443,7 @@ class MapController
                     context = context,
                     launchIntent = { context.startService(it) },
                 ) ?: return@launch
-                _state.update {
+                _sharedState.update {
                     it.copy(
                         walkMode =
                             WalkMode.EphemeralReplay(
@@ -445,6 +465,9 @@ class MapController
             isReverse: Boolean = false,
             isReturnToLocation: Boolean = false,
             followRoadsToStart: Boolean = false,
+            isPlanting: Boolean = false,
+            teleportBetweenWaypoints: Boolean = false,
+            teleportBetweenDelaySeconds: Int = AppConstants.RouteConstants.TELEPORT_BETWEEN_DEFAULT_DELAY_SECONDS,
         ) {
             appScope.launch {
                 startRouteReplayUseCase.execute(
@@ -453,6 +476,49 @@ class MapController
                     isReverse = isReverse,
                     isReturnToLocation = isReturnToLocation,
                     followRoadsToStart = followRoadsToStart,
+                    isPlanting = isPlanting,
+                    teleportBetweenWaypoints = teleportBetweenWaypoints,
+                    teleportBetweenDelaySeconds = teleportBetweenDelaySeconds,
+                )
+            }
+        }
+
+        fun savePastedRoute(
+            name: String,
+            points: List<LatLng>,
+        ) {
+            appScope.launch {
+                routeRepository.insertNamedPastedRoute(name, points).onFailure { e ->
+                    Log.e(TAG, "Failed to save pasted route", e)
+                }
+            }
+        }
+
+        fun startPastedRouteReplay(
+            points: List<LatLng>,
+            isLooping: Boolean = false,
+            isReverse: Boolean = false,
+            isReturnToLocation: Boolean = false,
+            followRoadsToStart: Boolean = false,
+            isPlanting: Boolean = false,
+            teleportBetweenWaypoints: Boolean = false,
+            teleportBetweenDelaySeconds: Int = AppConstants.RouteConstants.TELEPORT_BETWEEN_DEFAULT_DELAY_SECONDS,
+        ) {
+            appScope.launch {
+                val result = routeRepository.upsertPasteTempRoute(points)
+                result.exceptionOrNull()?.let { e ->
+                    Log.e(TAG, "Failed to upsert paste temp route", e)
+                    return@launch
+                }
+                startRouteReplayUseCase.execute(
+                    routeId = AppConstants.RouteConstants.PASTE_TEMP_ROUTE_ID,
+                    isLooping = isLooping,
+                    isReverse = isReverse,
+                    isReturnToLocation = isReturnToLocation,
+                    followRoadsToStart = followRoadsToStart,
+                    isPlanting = isPlanting,
+                    teleportBetweenWaypoints = teleportBetweenWaypoints,
+                    teleportBetweenDelaySeconds = teleportBetweenDelaySeconds,
                 )
             }
         }
@@ -490,15 +556,21 @@ class MapController
             plannedWaypoints: List<LatLng>? = null,
         ) {
             appScope.launch {
-                val speedMs =
-                    settingsRepository
-                        .getSpeedProfiles()
-                        .first()
-                        .firstOrNull { it.id == draft.speedProfileId }
-                        ?.speedMetersPerSecond
-                        ?: settingsRepository.getActiveSpeedProfile().first().speedMetersPerSecond
+                val mode = locationRepository.currentMode.value
+                val state = locationRepository.mockLocationState.value
+                if (isRoutePlaying(mode, state)) return@launch
+                pendingRoadWalkJob?.cancel()
+                pendingRoadWalkJob = null
+                walkCoordinator.cancel()
+                val wasReplay = mode == MockMode.ROUTE_REPLAY
+                val speedMs = settingsRepository.activateSessionSpeed(draft.speedProfileIdForKind())
                 val config = draft.toConfig(position).copy(plannedWaypoints = plannedWaypoints)
-                roamingRepository.startRoaming(config, speedMs)
+                val started = roamingRepository.startRoaming(config, speedMs)
+                if (started && wasReplay) {
+                    ephemeralReplayController.clearPendingWaypoints()
+                    _sharedState.update { it.copy(walkMode = WalkMode.Idle) }
+                    context.startService(MockLocationIntentBuilder.cancelRouteReplay(context))
+                }
             }
         }
 
@@ -514,8 +586,10 @@ class MapController
             roamingRepository.resumeRoaming()
         }
 
-        fun saveCurrentLocation(name: String) {
-            val position = _state.value.currentPosition ?: return
+        fun saveFavorite(
+            name: String,
+            position: LatLng,
+        ) {
             appScope.launch {
                 try {
                     favoriteRepository.addFavorite(
@@ -528,9 +602,14 @@ class MapController
                         createdAt = System.currentTimeMillis(),
                     )
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to save current location", e)
+                    Log.e(TAG, "Failed to save favorite", e)
                 }
             }
+        }
+
+        fun saveCurrentLocation(name: String) {
+            val position = _sharedState.value.currentPosition ?: return
+            saveFavorite(name, position)
         }
 
         fun addRecentSearch(
@@ -542,21 +621,7 @@ class MapController
         }
 
         /** Generates a roaming preview route, usable from any surface. */
-        suspend fun generateRoamingPreview(
-            center: LatLng,
-            radiusMeters: Double,
-            followRoads: Boolean,
-            speedProfileId: String,
-        ): List<LatLng>? =
-            roamingRepository.planRoute(
-                RoamingConfig(
-                    centerPosition = center,
-                    radiusMeters = radiusMeters,
-                    distanceMeters = AppConstants.RoamingConstants.DEFAULT_DISTANCE_METERS,
-                    speedProfileId = speedProfileId,
-                    useRoadSnapping = followRoads,
-                ),
-            )
+        suspend fun generateRoamingPreview(config: RoamingConfig): List<LatLng>? = roamingRepository.planRoute(config)
 
         /** Per-position cooldown state flow, usable from any surface. */
         fun cooldownForPosition(pos: LatLng): Flow<CooldownState> = teleportUseCase.cooldownFor(pos)

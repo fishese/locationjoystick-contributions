@@ -35,13 +35,17 @@ import com.locationjoystick.feature.favorites.impl.FavoritesViewModel
 import com.locationjoystick.feature.favorites.impl.MapPickerRoute
 import com.locationjoystick.feature.group.api.GROUP_ROUTE
 import com.locationjoystick.feature.group.impl.GroupSyncRoute
+import com.locationjoystick.feature.map.api.CAPTURE_ROUTE
 import com.locationjoystick.feature.map.api.MAP_ROUTE
+import com.locationjoystick.feature.map.impl.CaptureCoordinatesRoute
 import com.locationjoystick.feature.map.impl.mapScreen
 import com.locationjoystick.feature.onboarding.api.ONBOARDING_ROUTE
 import com.locationjoystick.feature.onboarding.impl.OnboardingRoute
 import com.locationjoystick.feature.routes.api.ROUTES_ROUTE
 import com.locationjoystick.feature.routes.api.ROUTE_CREATOR_ROUTE
 import com.locationjoystick.feature.routes.api.ROUTE_DETAIL_ROUTE
+import com.locationjoystick.feature.routes.api.ROUTE_PASTE_CREATOR_ROUTE
+import com.locationjoystick.feature.routes.impl.PasteCoordinatesRoute
 import com.locationjoystick.feature.routes.impl.RouteCreatorRoute
 import com.locationjoystick.feature.routes.impl.RouteDetailScreen
 import com.locationjoystick.feature.routes.impl.RoutesRoute
@@ -65,7 +69,7 @@ private fun fadeOutScale(): ExitTransition =
             animationSpec = spring(dampingRatio = 0.85f, stiffness = 400f),
         )
 
-private fun allPermissionsGranted(
+private fun corePermissionsGranted(
     context: Context,
     bypassMockLocationCheck: Boolean,
 ): Boolean {
@@ -74,10 +78,25 @@ private fun allPermissionsGranted(
             context,
             Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
-    return locationGranted &&
-        isOverlayPermissionGranted(context) &&
-        (bypassMockLocationCheck || isMockLocationEnabled(context))
+    return locationGranted && (bypassMockLocationCheck || isMockLocationEnabled(context))
 }
+
+private fun allPermissionsGranted(
+    context: Context,
+    bypassMockLocationCheck: Boolean,
+): Boolean = corePermissionsGranted(context, bypassMockLocationCheck) && isOverlayPermissionGranted(context)
+
+/**
+ * A returning user (already completed onboarding once) only needs the core permissions to
+ * reach the app — losing the overlay permission afterward disables joystick/widget overlays
+ * gracefully (see MockLocationService's canDrawOverlays gate) rather than forcing a full
+ * onboarding restart. A first-time user still needs every permission, overlay included.
+ */
+internal fun isNavGateReachable(
+    onboardingComplete: Boolean,
+    coreGranted: Boolean,
+    overlayGranted: Boolean,
+): Boolean = coreGranted && (onboardingComplete || overlayGranted)
 
 @Composable
 fun LjNavHost(
@@ -95,8 +114,15 @@ fun LjNavHost(
     if (startDestination == ONBOARDING_ROUTE) {
         val navGateViewModel: NavGateViewModel = hiltViewModel()
         val bypassMockLocationCheck by navGateViewModel.bypassMockLocationCheck.collectAsStateWithLifecycle()
-        LaunchedEffect(bypassMockLocationCheck) {
-            if (bypassMockLocationCheck && allPermissionsGranted(context, bypassMockLocationCheck = true)) {
+        val onboardingComplete by navGateViewModel.onboardingComplete.collectAsStateWithLifecycle()
+        LaunchedEffect(bypassMockLocationCheck, onboardingComplete) {
+            val reachable =
+                isNavGateReachable(
+                    onboardingComplete = onboardingComplete,
+                    coreGranted = corePermissionsGranted(context, bypassMockLocationCheck),
+                    overlayGranted = isOverlayPermissionGranted(context),
+                )
+            if (reachable) {
                 navController.navigate(IDLE_ROUTE) {
                     popUpTo(ONBOARDING_ROUTE) { inclusive = true }
                 }
@@ -142,6 +168,9 @@ fun LjNavHost(
                 onNavigateToFavorites = {
                     navController.navigate(FAVORITES_ROUTE) { launchSingleTop = true }
                 },
+                onNavigateToCapture = {
+                    navController.navigate(CAPTURE_ROUTE) { launchSingleTop = true }
+                },
                 onNavigateToSettings = {
                     navController.navigate(SETTINGS_ROUTE) { launchSingleTop = true }
                 },
@@ -155,6 +184,16 @@ fun LjNavHost(
             onOpenDrawer = onOpenDrawer,
             onNavigateToRoutes = { navController.navigate(ROUTES_GRAPH) { launchSingleTop = true } },
         )
+
+        composable(
+            route = CAPTURE_ROUTE,
+            enterTransition = { fadeInScale() },
+            exitTransition = { fadeOutScale() },
+            popEnterTransition = { fadeInScale() },
+            popExitTransition = { fadeOutScale() },
+        ) {
+            CaptureCoordinatesRoute(onOpenDrawer = onOpenDrawer)
+        }
 
         navigation(startDestination = ROUTES_ROUTE, route = ROUTES_GRAPH) {
             composable(
@@ -181,6 +220,9 @@ fun LjNavHost(
                     onNavigateToCreate = { routeType ->
                         navController.navigate("$ROUTE_CREATOR_ROUTE/${routeType.name}")
                     },
+                    onNavigateToPaste = {
+                        navController.navigate(ROUTE_PASTE_CREATOR_ROUTE)
+                    },
                     onImportGpx = {
                         gpxLauncher.launch(arrayOf("*/*"))
                     },
@@ -197,6 +239,19 @@ fun LjNavHost(
                 popExitTransition = { fadeOutScale() },
             ) {
                 RouteCreatorRoute(
+                    onRouteSaved = { navController.navigateUp() },
+                    onBack = { navController.navigateUp() },
+                )
+            }
+
+            composable(
+                route = ROUTE_PASTE_CREATOR_ROUTE,
+                enterTransition = { fadeInScale() },
+                exitTransition = { fadeOutScale() },
+                popEnterTransition = { fadeInScale() },
+                popExitTransition = { fadeOutScale() },
+            ) {
+                PasteCoordinatesRoute(
                     onRouteSaved = { navController.navigateUp() },
                     onBack = { navController.navigateUp() },
                 )

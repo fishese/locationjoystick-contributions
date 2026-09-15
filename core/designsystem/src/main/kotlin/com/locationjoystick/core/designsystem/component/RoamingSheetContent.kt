@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -29,9 +30,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.locationjoystick.core.common.constants.AppConstants
 import com.locationjoystick.core.common.util.toLocaleDoubleOrNull
-import com.locationjoystick.core.designsystem.LjText
 import com.locationjoystick.core.model.RoamingDefaults
+import com.locationjoystick.core.model.RoamingKind
 import com.locationjoystick.core.model.SpeedUnit
 import kotlin.math.roundToInt
 
@@ -52,9 +54,11 @@ fun RoamingSheetContent(
     isSpoofingActive: Boolean,
     hasPreview: Boolean,
     isPreviewLoading: Boolean = false,
+    showViewOnMap: Boolean = true,
+    routePlaying: Boolean = false,
     onDraftChange: (RoamingDefaults) -> Unit,
-    onGenerate: () -> Unit,
-    onStart: () -> Unit,
+    onGenerate: (RoamingKind) -> Unit,
+    onStart: (RoamingKind) -> Unit,
     onViewOnMap: () -> Unit,
 ) {
     val isMph = speedUnit == SpeedUnit.MPH
@@ -79,6 +83,16 @@ fun RoamingSheetContent(
         )
     }
 
+    var startRadiusText by remember {
+        mutableStateOf(draft.plantingStartRadiusMeters.roundToInt().toString())
+    }
+    var endRadiusText by remember {
+        mutableStateOf(draft.plantingEndRadiusMeters.roundToInt().toString())
+    }
+    var loopCountText by remember {
+        mutableStateOf(draft.plantingLoopCount.toString())
+    }
+
     Column(
         modifier =
             Modifier
@@ -87,25 +101,27 @@ fun RoamingSheetContent(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 24.dp),
     ) {
-        Text("Roaming", style = MaterialTheme.typography.headlineSmall, color = LjText)
+        Text("Roaming", style = MaterialTheme.typography.headlineSmall)
 
         Spacer(Modifier.height(8.dp))
 
-        // "View on map" always visible; greyed out when no preview
-        LjTextButton(
-            onClick = onViewOnMap,
-            enabled = hasPreview,
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .then(if (!hasPreview) Modifier.alpha(0.4f) else Modifier),
-        ) {
-            Text("View on map")
+        if (showViewOnMap) {
+            LjTextButton(
+                onClick = onViewOnMap,
+                enabled = hasPreview,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .then(if (!hasPreview) Modifier.alpha(0.4f) else Modifier),
+            ) {
+                Text("View on map")
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
-        Spacer(Modifier.height(12.dp))
+        Text("Walk around the block", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
 
-        // Radius + Route distance side by side
         Row(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = radiusText,
@@ -115,11 +131,7 @@ fun RoamingSheetContent(
                         val meters = if (isMph) v * 1609.344 else v
                         onDraftChange(
                             draft.copy(
-                                radiusMeters =
-                                    meters.coerceIn(
-                                        RADIUS_MIN_METERS,
-                                        RADIUS_MAX_METERS,
-                                    ),
+                                radiusMeters = meters.coerceIn(RADIUS_MIN_METERS, RADIUS_MAX_METERS),
                             ),
                         )
                     }
@@ -137,11 +149,7 @@ fun RoamingSheetContent(
                         val meters = if (isMph) v * 1609.344 else v
                         onDraftChange(
                             draft.copy(
-                                distanceMeters =
-                                    meters.coerceIn(
-                                        DISTANCE_MIN_METERS,
-                                        DISTANCE_MAX_METERS,
-                                    ),
+                                distanceMeters = meters.coerceIn(DISTANCE_MIN_METERS, DISTANCE_MAX_METERS),
                             ),
                         )
                     }
@@ -154,25 +162,12 @@ fun RoamingSheetContent(
         }
 
         Spacer(Modifier.height(12.dp))
-
-        // Speed profile selector
-        Text("Speed profile", style = MaterialTheme.typography.labelLarge, color = LjText)
-        Spacer(Modifier.height(4.dp))
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            SPEED_PROFILES.forEachIndexed { index, id ->
-                SegmentedButton(
-                    selected = draft.speedProfileId == id,
-                    onClick = { onDraftChange(draft.copy(speedProfileId = id)) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = SPEED_PROFILES.size),
-                ) {
-                    Text(SPEED_PROFILE_LABELS[id] ?: id)
-                }
-            }
-        }
-
+        RoamingSpeedProfileRow(
+            selectedId = draft.speedProfileId,
+            onSelect = { onDraftChange(draft.copy(speedProfileId = it)) },
+        )
         Spacer(Modifier.height(8.dp))
 
-        // Follow roads + Return to start side by side
         Row(modifier = Modifier.fillMaxWidth()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -181,8 +176,9 @@ fun RoamingSheetContent(
                 Checkbox(
                     checked = draft.followRoads,
                     onCheckedChange = { onDraftChange(draft.copy(followRoads = it)) },
+                    colors = ljCheckboxColors(),
                 )
-                Text("Follow roads", style = MaterialTheme.typography.bodyMedium, color = LjText)
+                Text("Follow roads", style = MaterialTheme.typography.bodyMedium)
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -191,45 +187,208 @@ fun RoamingSheetContent(
                 Checkbox(
                     checked = draft.returnToInitialLocation,
                     onCheckedChange = { onDraftChange(draft.copy(returnToInitialLocation = it)) },
+                    colors = ljCheckboxColors(),
                 )
-                Text("Return to start", style = MaterialTheme.typography.bodyMedium, color = LjText)
+                Text("Return to start", style = MaterialTheme.typography.bodyMedium)
             }
         }
+
+        Spacer(Modifier.height(12.dp))
+        RoamingGenerateStartRow(
+            kind = RoamingKind.WALK_AROUND,
+            hasCurrentPosition = hasCurrentPosition,
+            isSpoofingActive = isSpoofingActive,
+            isPreviewLoading = isPreviewLoading && draft.kind == RoamingKind.WALK_AROUND,
+            routePlaying = routePlaying,
+            onGenerate = onGenerate,
+            onStart = onStart,
+        )
 
         Spacer(Modifier.height(16.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
 
-        // Generate + Start side by side
+        Text("Planting", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Walks a spiral around where you are now, opening out then tightening back in. " +
+                "One loop is one full expand and contract. This is separate from circling around " +
+                "stops on a saved route.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+
         Row(modifier = Modifier.fillMaxWidth()) {
-            LjOutlinedButton(
-                onClick = onGenerate,
-                enabled = hasCurrentPosition && !isPreviewLoading,
+            OutlinedTextField(
+                value = startRadiusText,
+                onValueChange = { text ->
+                    startRadiusText = text
+                    text.toLocaleDoubleOrNull()?.let { v ->
+                        onDraftChange(
+                            draft.copy(
+                                plantingStartRadiusMeters =
+                                    v.coerceIn(
+                                        AppConstants.RoamingConstants.PLANTING_MIN_RADIUS_METERS,
+                                        AppConstants.RoamingConstants.PLANTING_MAX_RADIUS_METERS,
+                                    ),
+                            ),
+                        )
+                    }
+                },
+                label = { Text("Starting radius (m)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
                 modifier = Modifier.weight(1f).padding(end = 4.dp),
-            ) {
-                if (isPreviewLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text("Generate")
-                }
-            }
-            LjButton(
-                onClick = onStart,
-                enabled = hasCurrentPosition && isSpoofingActive && !isPreviewLoading,
+            )
+            OutlinedTextField(
+                value = endRadiusText,
+                onValueChange = { text ->
+                    endRadiusText = text
+                    text.toLocaleDoubleOrNull()?.let { v ->
+                        onDraftChange(
+                            draft.copy(
+                                plantingEndRadiusMeters =
+                                    v.coerceIn(
+                                        AppConstants.RoamingConstants.PLANTING_MIN_RADIUS_METERS,
+                                        AppConstants.RoamingConstants.PLANTING_MAX_RADIUS_METERS,
+                                    ),
+                            ),
+                        )
+                    }
+                },
+                label = { Text("Ending radius (m)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
-            ) {
-                Text("Start")
-            }
+            )
         }
 
-        if (!hasCurrentPosition || !isSpoofingActive) {
+        Spacer(Modifier.height(12.dp))
+        RoamingSpeedProfileRow(
+            selectedId = draft.plantingSpeedProfileId,
+            onSelect = { onDraftChange(draft.copy(plantingSpeedProfileId = it)) },
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Checkbox(
+                checked = draft.plantingInfiniteLoops,
+                onCheckedChange = { onDraftChange(draft.copy(plantingInfiniteLoops = it)) },
+                colors = ljCheckboxColors(),
+            )
+            Text("Infinite loop", style = MaterialTheme.typography.bodyMedium)
+        }
+
+        if (!draft.plantingInfiniteLoops) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = loopCountText,
+                onValueChange = { text ->
+                    loopCountText = text
+                    text.toIntOrNull()?.let { count ->
+                        onDraftChange(
+                            draft.copy(
+                                plantingLoopCount =
+                                    count.coerceIn(
+                                        1,
+                                        AppConstants.RoamingConstants.PLANTING_MAX_LOOP_COUNT,
+                                    ),
+                            ),
+                        )
+                    }
+                },
+                label = { Text("Number of loops") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        RoamingGenerateStartRow(
+            kind = RoamingKind.PLANTING,
+            hasCurrentPosition = hasCurrentPosition,
+            isSpoofingActive = isSpoofingActive,
+            isPreviewLoading = isPreviewLoading && draft.kind == RoamingKind.PLANTING,
+            routePlaying = routePlaying,
+            onGenerate = onGenerate,
+            onStart = onStart,
+        )
+
+        if (routePlaying) {
+            Text(
+                "Pause or stop the playing route first to start roaming",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        } else if (!hasCurrentPosition || !isSpoofingActive) {
             Text(
                 "Start location spoofing first to enable roaming",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RoamingSpeedProfileRow(
+    selectedId: String,
+    onSelect: (String) -> Unit,
+) {
+    Text("Speed profile", style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(4.dp))
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        SPEED_PROFILES.forEachIndexed { index, id ->
+            SegmentedButton(
+                selected = selectedId == id,
+                onClick = { onSelect(id) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = SPEED_PROFILES.size),
+            ) {
+                Text(SPEED_PROFILE_LABELS[id] ?: id)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoamingGenerateStartRow(
+    kind: RoamingKind,
+    hasCurrentPosition: Boolean,
+    isSpoofingActive: Boolean,
+    isPreviewLoading: Boolean,
+    routePlaying: Boolean,
+    onGenerate: (RoamingKind) -> Unit,
+    onStart: (RoamingKind) -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        LjOutlinedButton(
+            onClick = { onGenerate(kind) },
+            enabled = hasCurrentPosition && !isPreviewLoading,
+            modifier = Modifier.weight(1f).padding(end = 4.dp),
+        ) {
+            if (isPreviewLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Text("Generate")
+            }
+        }
+        LjButton(
+            onClick = { onStart(kind) },
+            enabled = hasCurrentPosition && isSpoofingActive && !isPreviewLoading && !routePlaying,
+            modifier = Modifier.weight(1f).padding(start = 4.dp),
+        ) {
+            Text("Start")
         }
     }
 }

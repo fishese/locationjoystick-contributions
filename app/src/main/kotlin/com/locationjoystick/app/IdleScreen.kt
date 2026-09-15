@@ -45,6 +45,7 @@ internal fun IdleScreen(
     onNavigateToMap: () -> Unit,
     onNavigateToRoutes: () -> Unit,
     onNavigateToFavorites: () -> Unit,
+    onNavigateToCapture: () -> Unit = {},
     onNavigateToSettings: () -> Unit,
     onNavigateToGroup: () -> Unit = {},
     bottomBar: @Composable () -> Unit = {},
@@ -110,6 +111,14 @@ internal fun IdleScreen(
                         "Favorites",
                         "Teleport or walk to saved locations.",
                         onNavigateToFavorites,
+                    )
+                }
+                item {
+                    IdleDestinationCard(
+                        LjIcons.AddLocationAlt,
+                        "Capture",
+                        "Collect map links from other apps, then save them as a route.",
+                        onNavigateToCapture,
                     )
                 }
                 item {
@@ -182,6 +191,13 @@ internal fun IdleScreen(
                     title = "Favorites",
                     description = "Teleport or walk to saved locations.",
                     onClick = onNavigateToFavorites,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                IdleDestinationCard(
+                    icon = LjIcons.AddLocationAlt,
+                    title = "Capture",
+                    description = "Collect map links from other apps, then save them as a route.",
+                    onClick = onNavigateToCapture,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 IdleDestinationCard(

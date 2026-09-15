@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.locationjoystick.core.common.constants.AppConstants
 import com.locationjoystick.core.common.util.toLocaleDoubleOrNull
 import com.locationjoystick.core.designsystem.LjIcons
 import com.locationjoystick.core.designsystem.component.LjCheckboxRow
@@ -87,7 +88,17 @@ private fun RoamingSection(
     Text("Roaming", style = MaterialTheme.typography.headlineSmall)
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        "Default settings used when starting a roaming session from the map.",
+        "Default settings used when starting a roaming session from the map or the floating widget. " +
+            "Walk around the block and Planting are separate modes — only one can run at a time.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+
+    Text("Walk around the block", style = MaterialTheme.typography.titleMedium)
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        "Picks random spots within a radius and walks between them.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -173,4 +184,119 @@ private fun RoamingSection(
         title = "Return to start",
         description = "Walks back to the starting position after the roaming session completes.",
     )
+
+    Spacer(modifier = Modifier.height(24.dp))
+    Text("Planting", style = MaterialTheme.typography.titleMedium)
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        "Walks a spiral around the current point, opening out to the ending radius then tightening back in. " +
+            "One loop is one full expand and contract.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+
+    var startRadiusText by remember {
+        mutableStateOf(roamingDefaults.plantingStartRadiusMeters.toInt().toString())
+    }
+    OutlinedTextField(
+        value = startRadiusText,
+        onValueChange = { text ->
+            startRadiusText = text
+            text.toLocaleDoubleOrNull()?.let { v ->
+                onAction(
+                    SettingsAction.UpdateRoamingDefaults(
+                        roamingDefaults.copy(
+                            plantingStartRadiusMeters =
+                                v.coerceIn(
+                                    AppConstants.RoamingConstants.PLANTING_MIN_RADIUS_METERS,
+                                    AppConstants.RoamingConstants.PLANTING_MAX_RADIUS_METERS,
+                                ),
+                        ),
+                    ),
+                )
+            }
+        },
+        label = { Text("Starting radius (m)") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    var endRadiusText by remember {
+        mutableStateOf(roamingDefaults.plantingEndRadiusMeters.toInt().toString())
+    }
+    OutlinedTextField(
+        value = endRadiusText,
+        onValueChange = { text ->
+            endRadiusText = text
+            text.toLocaleDoubleOrNull()?.let { v ->
+                onAction(
+                    SettingsAction.UpdateRoamingDefaults(
+                        roamingDefaults.copy(
+                            plantingEndRadiusMeters =
+                                v.coerceIn(
+                                    AppConstants.RoamingConstants.PLANTING_MIN_RADIUS_METERS,
+                                    AppConstants.RoamingConstants.PLANTING_MAX_RADIUS_METERS,
+                                ),
+                        ),
+                    ),
+                )
+            }
+        },
+        label = { Text("Ending radius (m)") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    Spacer(modifier = Modifier.height(8.dp))
+    Text("Speed profile", style = MaterialTheme.typography.labelLarge)
+    Spacer(modifier = Modifier.height(4.dp))
+    LjSegmentedControl(
+        options =
+            listOf(
+                "walk" to "Walk",
+                "run" to "Run",
+                "bike" to "Bike",
+            ),
+        selected = roamingDefaults.plantingSpeedProfileId,
+        onSelect = { onAction(SettingsAction.UpdateRoamingDefaults(roamingDefaults.copy(plantingSpeedProfileId = it))) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    LjCheckboxRow(
+        checked = roamingDefaults.plantingInfiniteLoops,
+        onCheckedChange = { onAction(SettingsAction.UpdateRoamingDefaults(roamingDefaults.copy(plantingInfiniteLoops = it))) },
+        title = "Infinite loop",
+        description = "Keeps expanding and contracting until you stop roaming.",
+    )
+
+    if (!roamingDefaults.plantingInfiniteLoops) {
+        var loopCountText by remember {
+            mutableStateOf(roamingDefaults.plantingLoopCount.toString())
+        }
+        OutlinedTextField(
+            value = loopCountText,
+            onValueChange = { text ->
+                loopCountText = text
+                text.toIntOrNull()?.let { count ->
+                    onAction(
+                        SettingsAction.UpdateRoamingDefaults(
+                            roamingDefaults.copy(
+                                plantingLoopCount =
+                                    count.coerceIn(1, AppConstants.RoamingConstants.PLANTING_MAX_LOOP_COUNT),
+                            ),
+                        ),
+                    )
+                }
+            },
+            label = { Text("Number of loops") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }

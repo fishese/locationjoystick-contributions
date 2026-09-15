@@ -1,6 +1,11 @@
 package com.locationjoystick.core.location
 
+import com.locationjoystick.core.common.constants.AppConstants
+import com.locationjoystick.core.common.util.buildPlantingReplayPath
 import com.locationjoystick.core.common.util.calculateBearing
+import com.locationjoystick.core.common.util.plantingRings
+import com.locationjoystick.core.common.util.stitchRingsWithConnectorsAndBoundaries
+import com.locationjoystick.core.common.util.stitchRingsWithoutConnectors
 import com.locationjoystick.core.data.LocationRepository
 import com.locationjoystick.core.data.RoamingRepository
 import com.locationjoystick.core.data.RouteRepository
@@ -8,6 +13,7 @@ import com.locationjoystick.core.data.WalkToEngine
 import com.locationjoystick.core.model.LatLng
 import com.locationjoystick.core.model.MockLocationState
 import com.locationjoystick.core.model.MockMode
+import com.locationjoystick.core.model.RouteProgress
 import com.locationjoystick.core.routing.OsrmClient
 import com.locationjoystick.core.routing.RouteReplayEngine
 import com.locationjoystick.core.routing.RoutingErrorReporter
@@ -17,11 +23,20 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import io.mockk.verifyOrder
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -82,6 +97,35 @@ class ReplayOrchestratorTest {
         verify { routeReplayEngine.resume(any(), any()) }
         assertTrue(stateChanges.contains(MockLocationState.RUNNING))
     }
+
+    @Test
+    fun handleResume_jumpsToNextWaypoint_before_resuming() {
+        val next = LatLng(1.0, 2.0)
+        every { routeReplayEngine.jumpToNextWaypoint(any(), any()) } returns next
+        every { routeReplayEngine.currentProgress() } returns RouteProgress(2, 4)
+
+        orchestrator.handleResume(1.4)
+
+        verifyOrder {
+            routeReplayEngine.jumpToNextWaypoint(any(), any())
+            routeReplayEngine.resume(any(), any())
+        }
+        assertEquals(MockMode.ROUTE_REPLAY, locationRepository.currentMode.value)
+        assertEquals(next, locationRepository.currentPosition.value)
+        assertEquals(RouteProgress(2, 4), locationRepository.routeProgress.value)
+        assertEquals(MockLocationState.RUNNING, locationRepository.mockLocationState.value)
+    }
+
+    @Test
+    fun handleStop_clearsRouteProgress() =
+        runTest {
+            locationRepository.setRouteProgress(RouteProgress(1, 3))
+            locationRepository.setMockMode(MockMode.ROUTE_REPLAY)
+
+            orchestrator.handleStop()
+
+            assertNull(locationRepository.routeProgress.value)
+        }
 
     @Test
     fun handleStop_whenRunning_callsStartUpdateLoop() =
@@ -297,7 +341,9 @@ class ReplayOrchestratorTest {
     @Test
     fun handleJumpToNextWaypoint_pushesReturnedPositionImmediately() {
         locationRepository.setMockMode(MockMode.ROUTE_REPLAY)
-        val target = com.locationjoystick.core.model.LatLng(1.0, 2.0)
+        val target =
+            com.locationjoystick.core.model
+                .LatLng(1.0, 2.0)
         every { routeReplayEngine.jumpToNextWaypoint(any(), any()) } returns target
 
         orchestrator.handleJumpToNextWaypoint()
@@ -361,8 +407,10 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", LatLng(2.0, 2.0), 0),
-                            com.locationjoystick.core.model.Waypoint("w2", LatLng(3.0, 3.0), 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", LatLng(2.0, 2.0), 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", LatLng(3.0, 3.0), 1),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
@@ -373,10 +421,105 @@ class ReplayOrchestratorTest {
                 osrmClient.resolveRoute(any(), LatLng(2.0, 2.0), LatLng(3.0, 3.0), true, any())
             } returns listOf(LatLng(2.0, 2.0), LatLng(3.0, 3.0))
 
-            orchestrator.handleStart("route-1", isBackward = false, speedMs = 1.4, followRoadsToStart = true)
+            orchestrator.handleStart(
+                "route-1",
+                isBackward = false,
+                speedMs = 1.4,
+                followRoadsToStart = true,
+                teleportToStart = false,
+            )
 
             coVerify { walkToEngine.walkToOnce(LatLng(0.0, 0.0), LatLng(1.0, 1.0), 1.4, any()) }
             coVerify { walkToEngine.walkToOnce(LatLng(1.0, 1.0), LatLng(2.0, 2.0), 1.4, any()) }
+        }
+
+    @Test
+    fun handleStart_default_teleportsToFirstWaypoint_skipsWalk() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val start = LatLng(2.0, 2.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", start, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", LatLng(3.0, 3.0), 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+
+            orchestrator.handleStart("route-1", isBackward = false, speedMs = 1.4)
+
+            assertEquals(start, locationRepository.currentPosition.value)
+            coVerify(exactly = 0) { walkToEngine.walkToOnce(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { osrmClient.resolveRoute(any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun handleStart_reverse_teleportsToLastWaypoint() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val last = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", LatLng(2.0, 2.0), 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", last, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+
+            orchestrator.handleStart("route-1", isBackward = true, speedMs = 1.4)
+
+            assertEquals(last, locationRepository.currentPosition.value)
+            coVerify(exactly = 0) { walkToEngine.walkToOnce(any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun handleStart_followRoadsAndTeleport_stillExpandsBetweenWaypointLegs() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val w1 = LatLng(2.0, 2.0)
+            val w2 = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+            coEvery { osrmClient.resolveRoute(any(), w1, w2, true, any()) } returns listOf(w1, LatLng(2.5, 2.5), w2)
+
+            orchestrator.handleStart("route-1", isBackward = false, speedMs = 1.4, followRoadsToStart = true)
+
+            assertEquals(w1, locationRepository.currentPosition.value)
+            coVerify(exactly = 0) { walkToEngine.walkToOnce(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { osrmClient.resolveRoute(any(), LatLng(0.0, 0.0), w1, true, any()) }
+            verify {
+                routeReplayEngine.start(
+                    waypoints = listOf(w1, LatLng(2.5, 2.5), w2),
+                    speedMs = 1.4,
+                    isLooping = false,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = listOf(0, 2),
+                )
+            }
         }
 
     @Test
@@ -389,14 +532,16 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", LatLng(2.0, 2.0), 0),
-                            com.locationjoystick.core.model.Waypoint("w2", LatLng(3.0, 3.0), 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", LatLng(2.0, 2.0), 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", LatLng(3.0, 3.0), 1),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
             val onCompleteSlot = slot<() -> Unit>()
             every {
-                routeReplayEngine.start(any(), any(), any(), any(), capture(onCompleteSlot), any())
+                routeReplayEngine.start(any(), any(), any(), any(), capture(onCompleteSlot), any(), any(), any())
             } returns Unit
 
             orchestrator.handleStart("route-1", isBackward = false, speedMs = 1.4)
@@ -416,8 +561,10 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", LatLng(2.0, 2.0), 0),
-                            com.locationjoystick.core.model.Waypoint("w2", LatLng(3.0, 3.0), 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", LatLng(2.0, 2.0), 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", LatLng(3.0, 3.0), 1),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
@@ -440,9 +587,12 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", w1, 0),
-                            com.locationjoystick.core.model.Waypoint("w2", w2, 1),
-                            com.locationjoystick.core.model.Waypoint("w3", w3, 2),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w3", w3, 2),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
@@ -483,9 +633,12 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", w1, 0),
-                            com.locationjoystick.core.model.Waypoint("w2", w2, 1),
-                            com.locationjoystick.core.model.Waypoint("w3", w3, 2),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w3", w3, 2),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
@@ -516,8 +669,10 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", w1, 0),
-                            com.locationjoystick.core.model.Waypoint("w2", w2, 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
@@ -540,9 +695,12 @@ class ReplayOrchestratorTest {
                     name = "R",
                     waypoints =
                         listOf(
-                            com.locationjoystick.core.model.Waypoint("w1", w1, 0),
-                            com.locationjoystick.core.model.Waypoint("w2", w2, 1),
-                            com.locationjoystick.core.model.Waypoint("w3", w3, 2),
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                            com.locationjoystick.core.model
+                                .Waypoint("w3", w3, 2),
                         ),
                 )
             coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
@@ -562,11 +720,310 @@ class ReplayOrchestratorTest {
         }
 
     @Test
+    fun handleStart_planting_expandsCirclesAroundSavedWaypoints() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val w1 = LatLng(2.0, 2.0)
+            val w2 = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+            val expected =
+                buildPlantingReplayPath(
+                    listOf(w1, w2),
+                    AppConstants.RouteConstants.PLANTING_DEFAULT_RADIUS_METERS,
+                )
+
+            orchestrator.handleStart("route-1", isBackward = false, speedMs = 1.4, isPlanting = true)
+
+            assertEquals(expected.first.first(), locationRepository.currentPosition.value)
+            assertEquals(expected.first, locationRepository.routeWaypoints.value)
+            coVerify(exactly = 0) { osrmClient.resolveRoute(any(), any(), any(), any(), any()) }
+            verify {
+                routeReplayEngine.start(
+                    waypoints = expected.first,
+                    speedMs = 1.4,
+                    isLooping = true,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = expected.second,
+                )
+            }
+        }
+
+    @Test
+    fun handleStart_planting_oneWaypoint_startsClosedCircle() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val center = LatLng(2.0, 2.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", center, 0),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+            val expected =
+                buildPlantingReplayPath(
+                    listOf(center),
+                    AppConstants.RouteConstants.PLANTING_DEFAULT_RADIUS_METERS,
+                )
+
+            orchestrator.handleStart("route-1", isBackward = false, speedMs = 1.4, isPlanting = true)
+
+            assertEquals(expected.first.first(), locationRepository.currentPosition.value)
+            assertNotEquals(center, locationRepository.currentPosition.value)
+            verify {
+                routeReplayEngine.start(
+                    waypoints = expected.first,
+                    speedMs = 1.4,
+                    isLooping = true,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = listOf(0),
+                )
+            }
+        }
+
+    @Test
+    fun handleStart_plantingReverse_plantsAroundLastWaypointFirst() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val w1 = LatLng(2.0, 2.0)
+            val w2 = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+            val expected =
+                buildPlantingReplayPath(
+                    listOf(w2, w1),
+                    AppConstants.RouteConstants.PLANTING_DEFAULT_RADIUS_METERS,
+                )
+
+            orchestrator.handleStart("route-1", isBackward = true, speedMs = 1.4, isPlanting = true)
+
+            assertEquals(expected.first.first(), locationRepository.currentPosition.value)
+            verify {
+                routeReplayEngine.start(
+                    waypoints = expected.first,
+                    speedMs = 1.4,
+                    isLooping = true,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = expected.second,
+                )
+            }
+        }
+
+    @Test
+    fun handleStart_plantingAndFollowRoads_resolvesConnectorsBetweenRingsNotCenters() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val w1 = LatLng(2.0, 2.0)
+            val w2 = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+            val radius = AppConstants.RouteConstants.PLANTING_DEFAULT_RADIUS_METERS
+            val rings = plantingRings(listOf(w1, w2), radius)
+            val from = rings[0].last()
+            val to = rings[1].first()
+            val connector = listOf(from, LatLng(2.5, 2.5), to)
+            coEvery { osrmClient.resolveRoute(any(), from, to, true, any()) } returns connector
+            val expected = stitchRingsWithConnectorsAndBoundaries(rings, listOf(connector))
+
+            orchestrator.handleStart(
+                "route-1",
+                isBackward = false,
+                speedMs = 1.4,
+                followRoadsToStart = true,
+                isPlanting = true,
+            )
+
+            coVerify(exactly = 0) { osrmClient.resolveRoute(any(), w1, w2, true, any()) }
+            coVerify(exactly = 1) { osrmClient.resolveRoute(any(), from, to, true, any()) }
+            assertEquals(expected.first, locationRepository.routeWaypoints.value)
+            verify {
+                routeReplayEngine.start(
+                    waypoints = expected.first,
+                    speedMs = 1.4,
+                    isLooping = true,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = expected.second,
+                )
+            }
+        }
+
+    @Test
+    fun handleStart_teleportBetween_skipsFollowRoadsExpansion() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val w1 = LatLng(2.0, 2.0)
+            val w2 = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+
+            orchestrator.handleStart(
+                "route-1",
+                isBackward = false,
+                speedMs = 1.4,
+                followRoadsToStart = true,
+                teleportBetweenWaypoints = true,
+            )
+
+            coVerify(exactly = 0) { osrmClient.resolveRoute(any(), any(), any(), any(), any()) }
+            assertEquals(listOf(w1, w2), locationRepository.routeWaypoints.value)
+            verify {
+                routeReplayEngine.start(
+                    waypoints = listOf(w1, w2),
+                    speedMs = 1.4,
+                    isLooping = false,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = null,
+                    teleportBetweenWaypoints = true,
+                    teleportBetweenDelaySeconds = AppConstants.RouteConstants.TELEPORT_BETWEEN_DEFAULT_DELAY_SECONDS,
+                )
+            }
+        }
+
+    @Test
+    fun handleStart_plantingAndTeleportBetween_doesNotCallOsrmForConnectors() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val w1 = LatLng(2.0, 2.0)
+            val w2 = LatLng(3.0, 3.0)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", w1, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", w2, 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+            val radius = AppConstants.RouteConstants.PLANTING_DEFAULT_RADIUS_METERS
+            val expected = stitchRingsWithoutConnectors(plantingRings(listOf(w1, w2), radius))
+
+            orchestrator.handleStart(
+                "route-1",
+                isBackward = false,
+                speedMs = 1.4,
+                followRoadsToStart = true,
+                isPlanting = true,
+                teleportBetweenWaypoints = true,
+            )
+
+            coVerify(exactly = 0) { osrmClient.resolveRoute(any(), any(), any(), any(), any()) }
+            assertEquals(expected.first, locationRepository.routeWaypoints.value)
+            verify {
+                routeReplayEngine.start(
+                    waypoints = expected.first,
+                    speedMs = 1.4,
+                    isLooping = true,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = expected.second,
+                    teleportBetweenWaypoints = true,
+                    teleportBetweenDelaySeconds = AppConstants.RouteConstants.TELEPORT_BETWEEN_DEFAULT_DELAY_SECONDS,
+                )
+            }
+        }
+
+    @Test
+    fun handleStart_planting_loopsEvenWhenLoopOverrideIsFalse() =
+        runTest {
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", LatLng(2.0, 2.0), 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", LatLng(3.0, 3.0), 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns kotlinx.coroutines.flow.flowOf(route)
+
+            orchestrator.handleStart(
+                "route-1",
+                isBackward = false,
+                speedMs = 1.4,
+                isLoopingOverride = false,
+                isPlanting = true,
+            )
+
+            verify {
+                routeReplayEngine.start(
+                    waypoints = any(),
+                    speedMs = 1.4,
+                    isLooping = true,
+                    onPositionUpdate = any(),
+                    onComplete = any(),
+                    boundaryIndices = any(),
+                )
+            }
+        }
+
+    @Test
     fun handleEphemeralStart_ticksPublishTravelDirectionBearing() =
         runTest {
             var capturedCallback: ((LatLng) -> Unit)? = null
             every {
-                routeReplayEngine.start(any(), any(), any(), any(), any(), any())
+                routeReplayEngine.start(any(), any(), any(), any(), any(), any(), any(), any())
             } answers {
                 capturedCallback = arg(3)
             }
@@ -587,7 +1044,7 @@ class ReplayOrchestratorTest {
         runTest {
             var capturedCallback: ((LatLng) -> Unit)? = null
             every {
-                routeReplayEngine.start(any(), any(), any(), any(), any(), any())
+                routeReplayEngine.start(any(), any(), any(), any(), any(), any(), any(), any())
             } answers {
                 capturedCallback = arg(3)
             }
@@ -597,5 +1054,102 @@ class ReplayOrchestratorTest {
             capturedCallback?.invoke(LatLng(0.0, 0.0))
 
             assertEquals(null, locationRepository.currentBearing.value)
+        }
+
+    @Test
+    fun tick_afterModeChangedAwayFromRouteReplay_isIgnored() =
+        runTest {
+            var pushCount = 0
+            var capturedCallback: ((LatLng) -> Unit)? = null
+            val orch =
+                ReplayOrchestrator(
+                    locationRepository = locationRepository,
+                    routeRepository = routeRepository,
+                    roamingRepository = roamingRepository,
+                    routeReplayEngine = routeReplayEngine,
+                    walkToEngine = walkToEngine,
+                    osrmClient = osrmClient,
+                    routingErrorReporter = routingErrorReporter,
+                    scope = CoroutineScope(dispatcher),
+                    onStateChange = { },
+                    onPositionChange = { _, _ -> },
+                    onSpeedChange = { },
+                    pushLocationUpdate = { pushCount++ },
+                    startUpdateLoop = { },
+                )
+            every {
+                routeReplayEngine.start(any(), any(), any(), any(), any(), any(), any(), any())
+            } answers {
+                capturedCallback = arg(3)
+            }
+            locationRepository.setPositionInternal(LatLng(0.0, 0.0))
+
+            orch.handleEphemeralStart(listOf(LatLng(0.0, 0.0), LatLng(2.0, 2.0)), 1.4)
+
+            // Simulates a new walk-to superseding this replay before its async ACTION_ROUTE_REPLAY_CANCEL
+            // teardown (handleCancel, dispatched on serviceScope) actually runs.
+            locationRepository.setMockMode(MockMode.WALK_TO)
+            locationRepository.setPositionInternal(LatLng(5.0, 5.0))
+            pushCount = 0
+
+            capturedCallback?.invoke(LatLng(9.0, 9.0))
+
+            assertEquals(LatLng(5.0, 5.0), locationRepository.currentPosition.value)
+            assertEquals(0, pushCount)
+        }
+
+    @Test
+    fun handleStart_followRoads_abortDuringOsrm_doesNotStartEngineOrSnapToRoute() =
+        runTest {
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val positions = mutableListOf<LatLng>()
+            val delayed =
+                ReplayOrchestrator(
+                    locationRepository = locationRepository,
+                    routeRepository = routeRepository,
+                    roamingRepository = roamingRepository,
+                    routeReplayEngine = routeReplayEngine,
+                    walkToEngine = walkToEngine,
+                    osrmClient = osrmClient,
+                    routingErrorReporter = routingErrorReporter,
+                    scope = CoroutineScope(dispatcher),
+                    onStateChange = {},
+                    onPositionChange = { lat, lon -> positions.add(LatLng(lat, lon)) },
+                    onSpeedChange = {},
+                    pushLocationUpdate = {},
+                    startUpdateLoop = {},
+                )
+            val origin = LatLng(0.0, 0.0)
+            val start = LatLng(2.0, 2.0)
+            locationRepository.setPositionInternal(origin)
+            val route =
+                com.locationjoystick.core.model.Route(
+                    id = "route-1",
+                    name = "R",
+                    waypoints =
+                        listOf(
+                            com.locationjoystick.core.model
+                                .Waypoint("w1", start, 0),
+                            com.locationjoystick.core.model
+                                .Waypoint("w2", LatLng(3.0, 3.0), 1),
+                        ),
+                )
+            coEvery { routeRepository.getRouteWithWaypoints("route-1") } returns flowOf(route)
+            coEvery { osrmClient.resolveRoute(any(), any(), any(), true, any()) } coAnswers {
+                delay(5_000)
+                val from = secondArg<LatLng>()
+                val to = thirdArg<LatLng>()
+                listOf(from, to)
+            }
+
+            delayed.handleStart("route-1", isBackward = false, speedMs = 1.4, followRoadsToStart = true)
+            advanceTimeBy(1_000)
+            delayed.abortInFlightStart()
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { routeReplayEngine.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+            assertEquals(origin, locationRepository.currentPosition.value)
+            assertTrue(positions.isEmpty())
+            assertNotEquals(MockMode.ROUTE_REPLAY, locationRepository.currentMode.value)
         }
 }

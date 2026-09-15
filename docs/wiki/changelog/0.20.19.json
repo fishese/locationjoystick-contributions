@@ -1,0 +1,9 @@
+{
+  "version": "0.20.19",
+  "highlights": [
+    "The map can return to real GPS, and the movable widget map starts with north locked.",
+    "Pasted lists ignore notes and automatically offer single-location or route actions.",
+    "Capture has separate List and Jump actions, a widget shortcut, and browser pass-through.",
+    "Routes and favorites gain four sort choices and widget rename, delete, and route sharing."
+  ]
+}

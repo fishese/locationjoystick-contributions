@@ -13,7 +13,9 @@ import com.locationjoystick.core.designsystem.LjIcons
 import com.locationjoystick.core.designsystem.LjSuccess
 import com.locationjoystick.core.designsystem.UiConstants
 import com.locationjoystick.core.designsystem.component.LjMapIconButton
+import com.locationjoystick.core.designsystem.component.RouteProgressBadgeInMapFabSlot
 import com.locationjoystick.core.model.AppFeature
+import com.locationjoystick.core.model.MockLocationState
 
 @Composable
 internal fun MapFabColumn(
@@ -26,15 +28,22 @@ internal fun MapFabColumn(
         verticalArrangement = Arrangement.spacedBy(UiConstants.FAB_CONTAINER_SIZE / 4),
         horizontalAlignment = Alignment.End,
     ) {
-        if (!isFollowingCamera) {
-            LjMapIconButton(
-                icon = LjIcons.MyLocation,
-                contentDescription = "Re-center on location",
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                onClick = { onAction(MapAction.RecenterCamera) },
-            )
-        }
+        LjMapIconButton(
+            icon = LjIcons.MyLocation,
+            contentDescription =
+                if (
+                    uiState.mockLocationState == MockLocationState.IDLE ||
+                    uiState.mockLocationState == MockLocationState.ERROR
+                ) {
+                    "Center on phone GPS"
+                } else {
+                    "Re-center on mock location"
+                },
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor =
+                if (isFollowingCamera) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimaryContainer,
+            onClick = { onAction(MapAction.RecenterCamera) },
+        )
 
         if (uiState.walkTarget != null) {
             Row(
@@ -159,6 +168,8 @@ internal fun MapFabColumn(
 
                 // Roaming — collapsible: compass icon always, pause/resume+stop expand to the left when roaming active
                 AppFeature.ROAMING -> {
+                    val routePlaying =
+                        uiState.isRouteReplay && uiState.mockLocationState == MockLocationState.RUNNING
                     if (enabled || uiState.isRoaming || uiState.isRoamingSheetMinimized) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -193,6 +204,7 @@ internal fun MapFabColumn(
                                 contentDescription =
                                     when {
                                         uiState.isRoaming -> "Roaming active"
+                                        routePlaying -> "Roaming ignored — a route is playing"
                                         uiState.isRoamingSheetMinimized -> "Expand roaming sheet"
                                         else -> "Start roaming"
                                     },
@@ -205,6 +217,7 @@ internal fun MapFabColumn(
                                 contentColor =
                                     when {
                                         uiState.isRoaming -> LjSuccess
+                                        routePlaying -> MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.22f)
                                         uiState.isRoamingSheetMinimized -> MaterialTheme.colorScheme.onTertiary
                                         else -> MaterialTheme.colorScheme.onPrimaryContainer
                                     },
@@ -232,6 +245,18 @@ internal fun MapFabColumn(
                     }
                 }
 
+                AppFeature.PASTE_COORDINATES -> {
+                    if (enabled) {
+                        LjMapIconButton(
+                            icon = LjIcons.ContentPaste,
+                            contentDescription = "Paste coordinates",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            onClick = { onAction(MapAction.OpenPasteCoordinates) },
+                        )
+                    }
+                }
+
                 else -> {
                     Unit
                 }
@@ -254,6 +279,14 @@ internal fun MapFabColumn(
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 onClick = { onAction(MapAction.ClearMap) },
+            )
+        }
+
+        val progress = uiState.routeProgress
+        if (uiState.isRouteReplay && progress != null) {
+            RouteProgressBadgeInMapFabSlot(
+                label = progress.label,
+                contentDescription = "Stop ${progress.current} of ${progress.total}",
             )
         }
     }

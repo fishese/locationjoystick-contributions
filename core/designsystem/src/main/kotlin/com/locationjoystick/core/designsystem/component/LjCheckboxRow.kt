@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +19,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+
+/** Checkbox colours that stay visible on both dark and light theme surfaces. */
+@Composable
+fun ljCheckboxColors() =
+    CheckboxDefaults.colors(
+        checkedColor = MaterialTheme.colorScheme.primary,
+        uncheckedColor = MaterialTheme.colorScheme.onSurface,
+        checkmarkColor = MaterialTheme.colorScheme.onPrimary,
+    )
 
 @Composable
 fun LjCheckboxRow(
@@ -30,16 +40,21 @@ fun LjCheckboxRow(
     textColor: Color = Color.Unspecified,
     descriptionColor: Color? = null,
     icon: ImageVector? = null,
+    trailing: @Composable (() -> Unit)? = null,
 ) {
     Row(
         modifier =
             modifier
                 .fillMaxWidth()
-                .clickable(enabled = enabled) { onCheckedChange(!checked) }
-                .padding(vertical = 4.dp),
+                .clickable(enabled = enabled) { onCheckedChange(!checked) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        Checkbox(
+            checked = checked,
+            onCheckedChange = null,
+            enabled = enabled,
+            colors = ljCheckboxColors(),
+        )
         if (icon != null) {
             Icon(
                 imageVector = icon,
@@ -54,14 +69,19 @@ fun LjCheckboxRow(
             )
             Spacer(modifier = Modifier.width(4.dp))
         }
-        Column(modifier = Modifier.padding(start = 8.dp)) {
+        Column(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(start = 8.dp),
+        ) {
             Text(
                 text = title,
                 color =
-                    if (enabled) {
-                        textColor
-                    } else {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    when {
+                        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        textColor != Color.Unspecified -> textColor
+                        else -> MaterialTheme.colorScheme.onSurface
                     },
             )
             if (description != null) {
@@ -71,6 +91,9 @@ fun LjCheckboxRow(
                     color = descriptionColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        if (trailing != null) {
+            trailing()
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.locationjoystick.feature.joystick.impl
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
@@ -10,13 +11,20 @@ import android.os.Build
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.OvershootInterpolator
 import androidx.compose.ui.graphics.toArgb
+import com.locationjoystick.core.common.constants.AppConstants
 import com.locationjoystick.core.designsystem.LjAccent
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.min
 
 private fun Double.toDegrees(): Double = Math.toDegrees(this)
+
+private fun packedRgb(rgb: Int): Int = Color.rgb((rgb shr 16) and 0xFF, (rgb shr 8) and 0xFF, rgb and 0xFF)
+
+private const val SNAP_BACK_DURATION_MS = 180L
+private const val SNAP_BACK_OVERSHOOT_TENSION = 1.5f
 
 data class JoystickInput(
     val angleDegrees: Float,
@@ -31,15 +39,6 @@ class JoystickView
         attrs: AttributeSet? = null,
         defStyleAttr: Int = 0,
     ) : View(context, attrs, defStyleAttr) {
-        companion object {
-            private const val KNOB_RADIUS_FRACTION = 0.25f
-            private const val DEADZONE_FRACTION = 0.15f
-            private const val OUTER_ALPHA = 80
-
-            /** Fraction of view width/height used for the drag handle hit area (top-left corner). */
-            private const val DRAG_HANDLE_FRACTION = 0.28f
-        }
-
         var onInputChanged: ((JoystickInput) -> Unit)? = null
         var onReleased: (() -> Unit)? = null
         var shouldResetOnRelease: (() -> Boolean)? = null
@@ -60,6 +59,19 @@ class JoystickView
             }
 
         /**
+         * When true, a higher-priority engine (playing route or running roam) owns movement.
+         * The stick stays visible; the knob fades toward the outer circle so ignored input
+         * reads as a disabled control rather than a warning colour.
+         */
+        var inputIgnored: Boolean = false
+            set(value) {
+                if (field == value) return
+                field = value
+                updateLockedAppearance()
+                invalidate()
+            }
+
+        /**
          * Called with raw screen deltas (dx, dy) while the user drags the handle.
          * The service should call [updateOverlayPosition] accordingly.
          */
@@ -67,41 +79,76 @@ class JoystickView
         var onDragHandleDown: ((rawX: Float, rawY: Float) -> Unit)? = null
 
         private val accentArgb = LjAccent.toArgb()
+        private val joystickConstants = AppConstants.JoystickConstants
+
+        private val outerRingColor = packedRgb(joystickConstants.OUTER_BORDER_RGB)
+        private val knobEdgeColor = packedRgb(joystickConstants.KNOB_EDGE_RGB)
 
         private val outerPaint =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                alpha = OUTER_ALPHA
+                alpha = joystickConstants.OUTER_ALPHA
                 style = Paint.Style.FILL
             }
 
         private val outerBorderPaint =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                alpha = 160
+                color = outerRingColor
+                alpha = joystickConstants.OUTER_BORDER_ALPHA
                 style = Paint.Style.STROKE
                 strokeWidth = 4f
             }
 
         private fun updateLockedAppearance() {
-            if (isLocked) {
-                outerPaint.color = accentArgb
-                outerPaint.alpha = 180
-                outerBorderPaint.color = accentArgb
-                outerBorderPaint.alpha = 220
-            } else {
-                outerPaint.color = Color.WHITE
-                outerPaint.alpha = OUTER_ALPHA
-                outerBorderPaint.color = Color.WHITE
-                outerBorderPaint.alpha = 160
+            when {
+                inputIgnored -> {
+                    // Knob almost matches the outer fill so the control looks washed out.
+                    outerPaint.color = Color.WHITE
+                    outerPaint.alpha = joystickConstants.OUTER_ALPHA
+                    outerBorderPaint.color = outerRingColor
+                    outerBorderPaint.alpha = 90
+                    knobPaint.color = Color.WHITE
+                    knobPaint.alpha = joystickConstants.OUTER_ALPHA + 16
+                    knobEdgePaint.color = knobEdgeColor
+                    knobEdgePaint.alpha = 40
+                }
+                isLocked -> {
+                    outerPaint.color = accentArgb
+                    outerPaint.alpha = 180
+                    outerBorderPaint.color = accentArgb
+                    outerBorderPaint.alpha = 220
+                    knobPaint.color = Color.WHITE
+                    knobPaint.alpha = joystickConstants.KNOB_ALPHA
+                    knobEdgePaint.color = knobEdgeColor
+                    knobEdgePaint.alpha = 120
+                }
+                else -> {
+                    outerPaint.color = Color.WHITE
+                    outerPaint.alpha = joystickConstants.OUTER_ALPHA
+                    outerBorderPaint.color = outerRingColor
+                    outerBorderPaint.alpha = joystickConstants.OUTER_BORDER_ALPHA
+                    knobPaint.color = Color.WHITE
+                    knobPaint.alpha = joystickConstants.KNOB_ALPHA
+                    knobEdgePaint.color = knobEdgeColor
+                    knobEdgePaint.alpha = joystickConstants.KNOB_EDGE_ALPHA
+                }
             }
         }
 
         private val knobPaint =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                alpha = 220
+                alpha = joystickConstants.KNOB_ALPHA
                 style = Paint.Style.FILL
+            }
+
+        /** Soft dark ring so the light stick separates from the more opaque disc. */
+        private val knobEdgePaint =
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = knobEdgeColor
+                alpha = joystickConstants.KNOB_EDGE_ALPHA
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
             }
 
         /** Background circle for the drag handle. */
@@ -140,6 +187,8 @@ class JoystickView
         /** Which pointer is controlling the drag handle (-1 = none). */
         private var dragPointerId = -1
 
+        private var snapBackAnimator: ValueAnimator? = null
+
         override fun onSizeChanged(
             w: Int,
             h: Int,
@@ -150,14 +199,15 @@ class JoystickView
             centerX = w / 2f
             centerY = h / 2f
             outerRadius = min(w, h) / 2f * 0.9f
-            knobRadius = outerRadius * KNOB_RADIUS_FRACTION
-            deadzoneRadius = outerRadius * DEADZONE_FRACTION
+            knobRadius = outerRadius * joystickConstants.KNOB_RADIUS_FRACTION
+            deadzoneRadius = outerRadius * joystickConstants.DEADZONE_FRACTION
 
             // Drag handle sits at top-left; radius is ~13% of the view width
             handleRadius = w * 0.13f
             handleCx = handleRadius * 1.1f
             handleCy = handleRadius * 1.1f
-            dragHandleHitRect = RectF(0f, 0f, w * DRAG_HANDLE_FRACTION, h * DRAG_HANDLE_FRACTION)
+            dragHandleHitRect =
+                RectF(0f, 0f, w * joystickConstants.DRAG_HANDLE_FRACTION, h * joystickConstants.DRAG_HANDLE_FRACTION)
         }
 
         override fun onDraw(canvas: Canvas) {
@@ -165,7 +215,10 @@ class JoystickView
             // Joystick
             canvas.drawCircle(centerX, centerY, outerRadius, outerPaint)
             canvas.drawCircle(centerX, centerY, outerRadius, outerBorderPaint)
-            canvas.drawCircle(centerX + knobOffsetX, centerY + knobOffsetY, knobRadius, knobPaint)
+            val knobX = centerX + knobOffsetX
+            val knobY = centerY + knobOffsetY
+            canvas.drawCircle(knobX, knobY, knobRadius, knobPaint)
+            canvas.drawCircle(knobX, knobY, knobRadius, knobEdgePaint)
 
             // Drag handle background
             canvas.drawCircle(handleCx, handleCy, handleRadius, handleBgPaint)
@@ -273,6 +326,9 @@ class JoystickView
             x: Float,
             y: Float,
         ): Boolean {
+            snapBackAnimator?.cancel()
+            snapBackAnimator = null
+
             val dx = x - centerX
             val dy = y - centerY
             val distance = hypot(dx, dy)
@@ -299,12 +355,35 @@ class JoystickView
 
         private fun handleJoystickUp(): Boolean {
             if (shouldResetOnRelease?.invoke() != false) {
-                knobOffsetX = 0f
-                knobOffsetY = 0f
+                animateKnobToCenter()
                 onInputChanged?.invoke(JoystickInput(angleDegrees = 0f, force = 0f))
             }
             onReleased?.invoke()
             invalidate()
             return true
+        }
+
+        private fun animateKnobToCenter() {
+            val startX = knobOffsetX
+            val startY = knobOffsetY
+            snapBackAnimator?.cancel()
+            snapBackAnimator =
+                ValueAnimator.ofFloat(1f, 0f).apply {
+                    duration = SNAP_BACK_DURATION_MS
+                    interpolator = OvershootInterpolator(SNAP_BACK_OVERSHOOT_TENSION)
+                    addUpdateListener {
+                        val fraction = it.animatedValue as Float
+                        knobOffsetX = startX * fraction
+                        knobOffsetY = startY * fraction
+                        invalidate()
+                    }
+                    start()
+                }
+        }
+
+        override fun onDetachedFromWindow() {
+            snapBackAnimator?.cancel()
+            snapBackAnimator = null
+            super.onDetachedFromWindow()
         }
     }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">locationjoystick</string>
-    <string name="accessibility_service_label">locationjoystick compass</string>
+    <string name="app_name">locationjoystick (f)</string>
+    <string name="accessibility_service_label">locationjoystick (f) compass</string>
     <string name="accessibility_service_description">Used only by the optional Tap to Walk compass feature, when you enable it in Settings. Reads the on-screen compass direction so your taps map to the correct real-world direction. Not an accessibility tool for users with disabilities.</string>
 </resources>

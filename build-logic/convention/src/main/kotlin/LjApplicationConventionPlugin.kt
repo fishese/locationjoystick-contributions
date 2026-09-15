@@ -10,7 +10,6 @@ class LjApplicationConventionPlugin : Plugin<Project> {
         with(target) {
             with(pluginManager) {
                 apply("com.android.application")
-                apply("org.jetbrains.kotlin.android")
                 apply("org.jetbrains.kotlinx.kover")
             }
 
@@ -33,7 +32,7 @@ class LjApplicationConventionPlugin : Plugin<Project> {
                 defaultConfig {
                     minSdk = 28
                     targetSdk = 36
-                    val versionName = "0.18.2" // x-release-please-version
+                    val versionName = "0.20.19" // x-release-please-version
                     val (maj, min, pat) = versionName.substringBefore("-").split(".").map { it.toInt() }
                     this.versionName = versionName
                     versionCode = maj * 10000 + min * 100 + pat

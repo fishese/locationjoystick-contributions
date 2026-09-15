@@ -61,6 +61,7 @@ import com.locationjoystick.core.designsystem.LjWarningContainer
 import com.locationjoystick.core.designsystem.component.AppIcon
 import com.locationjoystick.core.designsystem.component.LjPrimaryButton
 import com.locationjoystick.core.designsystem.component.LjScaffold
+import com.locationjoystick.core.designsystem.component.WideContentClamp
 import com.locationjoystick.core.location.rememberSpoofToggleState
 import com.locationjoystick.feature.onboarding.api.ONBOARDING_ROUTE
 
@@ -136,11 +137,11 @@ internal fun OnboardingScreen(
         containerColor = MaterialTheme.colorScheme.background,
         showSpoofToggle = false,
     ) { paddingValues ->
-        Column(
-            modifier =
+        WideContentClamp(
+            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            contentModifier =
                 Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
+                    .fillMaxWidth()
                     .verticalScroll(remember { ScrollState(0) })
                     .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -170,6 +171,15 @@ internal fun OnboardingScreen(
             Text(
                 text = "Complete the steps below to start simulating your GPS location.",
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "No account or login needed — everything stays on your device.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
@@ -253,7 +263,9 @@ internal fun OnboardingScreen(
                 title = "Set as fake GPS app",
                 description =
                     "In Developer Options, find 'Select mock location app' and choose locationjoystick. " +
-                        "This lets the app replace your real GPS.",
+                        "This lets the app replace your real GPS. If you installed the app inside a " +
+                        "work profile (e.g. via Shelter), pick it from Developer Options in that same " +
+                        "profile — Android won't let a different profile select it.",
                 isGranted = uiState.mockLocationEnabled,
                 icon = LjIcons.DeveloperMode,
                 actionLabel = "Open Developer Options",

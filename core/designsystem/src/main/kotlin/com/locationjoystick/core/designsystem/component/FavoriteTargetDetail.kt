@@ -38,7 +38,7 @@ fun FavoriteTargetDetail(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(favorite.name, style = MaterialTheme.typography.headlineSmall, color = textColor)
         Text(
@@ -54,9 +54,9 @@ fun FavoriteTargetDetail(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(top = 16.dp),
+                        .padding(top = 8.dp),
             ) {
-                Text("Set location", color = textColor)
+                Text("Set location")
             }
         }
         OutlinedButton(
@@ -66,7 +66,7 @@ fun FavoriteTargetDetail(
                     .fillMaxWidth()
                     .padding(top = 8.dp),
         ) {
-            Text("Walk to location", color = textColor)
+            Text("Walk to location")
         }
         OutlinedButton(
             onClick = onGoToLocationViaRoads,
@@ -75,14 +75,14 @@ fun FavoriteTargetDetail(
                     .fillMaxWidth()
                     .padding(top = 8.dp),
         ) {
-            Text("Walk via roads", color = textColor)
+            Text("Walk via roads")
         }
         if (showDismissButton) {
             TextButton(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             ) {
-                Text("Do nothing", color = textColor)
+                Text("Do nothing")
             }
         }
     }
